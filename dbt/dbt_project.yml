@@ -1,0 +1,7 @@
+name: flight_dbt
+version: 1.0.0
+profile: flight_profile
+model-paths: ["models"]
+models:
+  flight_dbt:
+    +materialized: view
