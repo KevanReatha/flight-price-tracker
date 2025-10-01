@@ -1,3 +1,13 @@
+# --- Core dependencies for ingestion pipeline ---
+
+# HTTP requests to external APIs (e.g., Skyscanner, Kiwi Tequila)
 requests
+
+# Load .env for credentials and configs
 python-dotenv
+
+# Snowflake official Python connector (to insert into RAW tables)
 snowflake-connector-python
+
+# Used for RSA key-pair authentication with Snowflake
+cryptography

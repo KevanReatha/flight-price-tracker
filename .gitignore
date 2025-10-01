@@ -1,15 +1,20 @@
-# Python
+# --- Python ---
 .venv/
 __pycache__/
 *.pyc
 
-# Env
+# --- Env vars ---
 .env
 
-# dbt
+# --- dbt ---
 target/
 logs/
 dbt_modules/
 
-# OS
+# --- OS files ---
 .DS_Store
+
+# --- VS Code ---
+# Ignore tout le dossier .vscode sauf settings.json
+.vscode/*
+!.vscode/settings.json
