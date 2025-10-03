@@ -91,4 +91,4 @@ flight-price-tracker/
 
 ## 👤 Author
 
-**Kevan Tamom** – Analytics Engineer /, building portfolio-ready projects with real-world workflows.  
+**Kevan Tamom** – Analytics Engineer, building portfolio-ready projects with real-world workflows.  
