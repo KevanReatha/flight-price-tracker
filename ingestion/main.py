@@ -19,7 +19,9 @@ def run_once():
         for i in range(1, HORIZON_DAYS + 1):
             dep = date.today() + timedelta(days=i)
             price, stops, airline, params, raw = fetch_min_price(origin, dest, dep)
-            if price is None:  # Why: API may fail or have no flights that day
+            if price is None:
+                # TEMP DEBUG:
+                # print(f"[skip] {origin}-{dest} {dep}: no price")
                 continue
             batch.append((origin, dest, dep, now, price, int(stops) if stops is not None else None, airline, SOURCE_NAME, "Y"))
             if STORE_JSON and raw:

@@ -1,0 +1,14 @@
+version: 2
+
+models:
+  - name: stg_price_quotes_parsed
+    description: Cleaned and standardized quotes from Tequila API
+    columns:
+      - name: route_code
+        tests: [not_null]
+      - name: departure_date
+        tests: [not_null]
+      - name: quote_ts
+        tests: [not_null]
+      - name: price_aud
+        tests: [not_null]

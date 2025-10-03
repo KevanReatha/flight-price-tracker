@@ -1,12 +1,19 @@
-flight_profile:
+flight_price_tracker:
   target: dev
   outputs:
     dev:
       type: snowflake
-      account: {{ env_var('SNOWFLAKE_ACCOUNT') }}
-      user: {{ env_var('SNOWFLAKE_USER') }}
-      password: {{ env_var('SNOWFLAKE_PASSWORD') }}
-      role: {{ env_var('SNOWFLAKE_ROLE') }}
-      database: {{ env_var('SNOWFLAKE_DATABASE') }}
-      warehouse: {{ env_var('SNOWFLAKE_WAREHOUSE') }}
+      account: <YOUR_ACCOUNT>   # ex: AJIQNKH-UB02860
+      user: <YOUR_USER>         # ex: KEVANTAMOM
+      role: ACCOUNTADMIN
+      warehouse: WH_XS
+      database: FLIGHT_DB
       schema: STG
+
+      # --- Auth options ---
+      # Option A: Password auth
+      # password: <YOUR_PASSWORD>
+
+      # Option B: Key pair auth (recommended)
+      private_key_path: /Users/<your_user>/.ssh/rsa_key.p8
+      authenticator: username_password

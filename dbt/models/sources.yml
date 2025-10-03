@@ -1,0 +1,22 @@
+version: 2
+
+sources:
+  - name: raw
+    database: FLIGHT_DB
+    schema: RAW
+    tables:
+      - name: PRICE_QUOTES_PARSED
+        description: Raw parsed price quotes from Tequila API
+        columns:
+          - name: ORIGIN
+            tests: [not_null]
+          - name: DESTINATION
+            tests: [not_null]
+          - name: DEPARTURE_DATE
+            tests: [not_null]
+          - name: QUOTE_TS
+            tests: [not_null]
+          - name: PRICE_AUD
+            tests: [not_null]
+      - name: PRICE_QUOTES_JSON
+        description: Raw JSON snapshots of requests/responses

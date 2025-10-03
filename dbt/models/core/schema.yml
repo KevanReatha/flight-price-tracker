@@ -1,0 +1,25 @@
+version: 2
+
+models:
+  - name: core_daily_quotes
+    description: One row per route_code + departure_date + quote_day, with the daily minimum price observed
+    columns:
+      - name: route_code
+        tests:
+          - not_null
+      - name: departure_date
+        tests:
+          - not_null
+      - name: quote_day
+        tests:
+          - not_null
+      - name: daily_min_price_aud
+        tests:
+          - not_null
+      - name: observed_at
+        tests:
+          - not_null
+
+    tests:
+      - unique:
+          column_name: "route_code || '-' || cast(departure_date as string) || '-' || cast(quote_day as string)"

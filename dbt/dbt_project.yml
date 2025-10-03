@@ -1,7 +1,28 @@
-name: flight_dbt
-version: 1.0.0
-profile: flight_profile
+name: "flight_price_tracker"
+version: "1.0.0"
+config-version: 2
+
+profile: "flight_price_tracker"
+
 model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+seed-paths: ["seeds"]
+analysis-paths: ["analyses"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+# Default configs for all models unless overridden
 models:
-  flight_dbt:
-    +materialized: view
+  flight_price_tracker:
+    +database: FLIGHT_DB
+    # We'll direct models into schemas by folder:
+    stg:
+      +schema: STG
+      +materialized: view
+    core:
+      +schema: CORE
+      +materialized: table
+    mart:
+      +schema: MART
+      +materialized: table

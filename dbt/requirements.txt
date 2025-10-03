@@ -1,0 +1,7 @@
+# --- Dependencies for dbt project (Day 4) ---
+
+# Core dbt package
+dbt-core
+
+# Snowflake adapter for dbt (lets dbt talk to Snowflake)
+dbt-snowflake
