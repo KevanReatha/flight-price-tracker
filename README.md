@@ -6,13 +6,13 @@ An end-to-end data project that simulates a real-world **Analytics Engineering**
 - Transformations with **dbt**.
 - Interactive analytics with **Streamlit**.
 
-Built fully via **CLI-first approach** (SnowSQL + Python) to mirror production practices.
+Built fully via a **CLI-first approach** (SnowSQL + Python) to mirror production practices.
 
 ---
 
 ## 🚀 Tech Stack
 - **Snowflake** → cloud data warehouse (storage + compute).
-- **dbt** → SQL-based transformations, modular modeling.
+- **dbt** → SQL-based transformations, modular modeling, testing.
 - **Python** → ingestion scripts, API integration.
 - **Streamlit** → interactive app for insights.
 - **Git + GitHub** → version control, CI/CD-ready.
@@ -27,7 +27,7 @@ flight-price-tracker/
 │   └── 02_check_setup.sql           # Verify setup objects & row counts
 │
 ├── ingestion/                    # Python ingestion (Day 3 onwards)
-│   ├── providers/                 # API connectors (Skyscanner, etc.)
+│   ├── providers/                 # API connectors (Tequila, etc.)
 │   ├── utils/                     # Snowflake I/O helpers
 │   ├── main.py                    # Entry point for ingestion
 │   └── requirements.txt
@@ -47,8 +47,6 @@ flight-price-tracker/
 ├── .env.example
 └── README.md
 
-
-
 ---
 
 ## 🛠️ Setup Steps
@@ -66,12 +64,31 @@ flight-price-tracker/
   - `PRICE_QUOTES_JSON`
 - All created via **SnowSQL CLI**, not UI.
 
-**Commands:**
-```bash
-snowsql -c myconn -f sql/01_snowflake_cli_setup.sql
-snowsql -c myconn -f sql/02_check_setup.sql
+### Day 3 – Ingestion Pipeline
+- Built Python ingestion to call **Tequila API** and fetch flight prices.
+- Configurable via `.env`:
+  - Horizon of days (default 60).
+  - Supported routes (MEL → BKK, PNH, SGN, MNL, HND, ICN).
+- Inserted JSON + parsed rows into Snowflake RAW.
 
+### Day 4 – dbt Transformations
+- Created dbt project with layers:
+  - `STG` → clean parsed rows.
+  - `CORE` → aggregated daily minimum price.
+  - `MART` → business-ready lowest price by route/date.
+- Added schema tests (not_null, unique) for data quality.
+- Confirmed dbt run + test pass.
 
-👤 Author
+### Day 5 – Streamlit App
+- Built interactive app connected to Snowflake:
+  - Route/date selectors.
+  - Table of lowest prices by route/date.
+  - Trend chart of prices over time.
+- Cleaned display labels for user-friendliness (Airline, Price AUD).
+- Verified end-to-end pipeline (Ingestion → dbt → App).
 
-Kevan Tamom – aspiring Analytics Engineer / AI Engineer, building portfolio-ready projects with real-world workflows.
+---
+
+## 👤 Author
+
+**Kevan Tamom** – Analytics Engineer /, building portfolio-ready projects with real-world workflows.  

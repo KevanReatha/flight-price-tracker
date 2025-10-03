@@ -2,6 +2,7 @@
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
 
 # --- Env vars ---
 .env
@@ -18,3 +19,6 @@ dbt_modules/
 # Ignore tout le dossier .vscode sauf settings.json
 .vscode/*
 !.vscode/settings.json
+
+# --- Streamlit ---
+.streamlit/

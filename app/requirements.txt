@@ -1,4 +1,16 @@
+# UI framework to build the web app
 streamlit
+
+# Tabular data handling (joins, groupby, date ops) used to prep query results
 pandas
+
+# Declarative charts in Streamlit (line chart for price vs quote_day, etc.)
+altair
+
+# Connects the app to Snowflake (runs SQL, fetches results)
 snowflake-connector-python
+
+# Loads env vars in local dev (handy if you ever run the app without Streamlit secrets)
 python-dotenv
+
+# Needed when the Snowflake connector reads private keys for key-pair auth
