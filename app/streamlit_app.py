@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+import time
 import altair as alt
 import pandas as pd
 import streamlit as st
@@ -12,6 +13,10 @@ st.set_page_config(page_title="Flight Price Tracker", page_icon="✈️", layout
 st.title("✈️ Flight Price Tracker")
 
 SNOW = st.secrets["snowflake"]  # set in .streamlit/secrets.toml
+
+# Cache & refresh policies (cost control)
+CACHE_TTL_SECS = 86400          # 24h: data ingested daily at 01:00, no need to requery more often
+REFRESH_COOLDOWN_SECS = 300     # 5 min throttle per session for manual reloads
 
 # IATA -> airline names (extend as needed)
 AIRLINE_NAME = {
@@ -42,6 +47,7 @@ def get_connection():
         warehouse=SNOW["warehouse"],
         database=SNOW["database"],
         schema=SNOW.get("schema", "MART"),
+        session_parameters={"QUERY_TAG": "flight_price_streamlit"},
     )
     if SNOW.get("private_key_path"):
         kwargs["private_key_file"] = SNOW["private_key_path"]
@@ -53,7 +59,7 @@ def get_connection():
     return snowflake.connector.connect(**kwargs)
 
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=CACHE_TTL_SECS, show_spinner=False)
 def fetch_df(sql: str, params: dict | None = None) -> pd.DataFrame:
     with get_connection() as con:
         cur = con.cursor()
@@ -64,6 +70,17 @@ def fetch_df(sql: str, params: dict | None = None) -> pd.DataFrame:
         finally:
             cur.close()
     return pd.DataFrame(rows, columns=cols)
+
+
+def can_refresh_every(seconds: int = REFRESH_COOLDOWN_SECS) -> bool:
+    """Allow clearing cache only every N seconds per user session."""
+    key = "last_refresh_ts"
+    now = time.time()
+    last = st.session_state.get(key, 0)
+    if now - last >= seconds:
+        st.session_state[key] = now
+        return True
+    return False
 
 
 # --------------------------- SQL ---------------------------
@@ -126,8 +143,18 @@ with st.sidebar:
         st.error("Start date must be before end date.")
         st.stop()
 
-    if st.button("🔄 Refresh data"):
-        st.cache_data.clear()
+    st.markdown("### Controls")
+    if st.button("🔄 Reload today’s data (once/day)"):
+        if can_refresh_every():
+            st.cache_data.clear()
+            st.success("Cache cleared ✅ — next load will pull fresh data from Snowflake.")
+        else:
+            st.info("⏳ Please wait a few minutes before refreshing again.")
+
+    st.caption(
+        "Data updates via Prefect daily at 1:00 AM (Australia/Melbourne). "
+        "Queries are cached for 24 hours to control Snowflake costs."
+    )
 
 # Dynamically load routes that have data in window (from your supported list)
 routes_df = fetch_df(ROUTES_SQL, {"start": start_d, "end": end_d})
@@ -162,7 +189,7 @@ else:
     k1.metric("Lowest price", f"AUD {min_price:,.0f}")
     k2.metric("Rows", f"{len(df)}")
     k3.caption(f"**Date range:** {start_d} → {end_d}")
-    k4.caption(f"**Last updated (quote day):** {df['QUOTE_DAY'].max()}")
+    k4.caption(f"**Quote day:** {df['QUOTE_DAY'].max()}")
 
     # User-facing summary table
     df_disp = (

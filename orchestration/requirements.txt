@@ -1,0 +1,4 @@
+# --- Orchestration ---
+# Prefect is a modern workflow orchestrator (Python-first, lighter than Airflow).
+# Used to schedule ingestion + dbt pipeline, add retries, logging, and visibility.
+prefect>=2.14

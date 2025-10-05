@@ -21,4 +21,6 @@ dbt_modules/
 !.vscode/settings.json
 
 # --- Streamlit ---
-.streamlit/
+# Ignore secrets but allow config
+.streamlit/*
+!.streamlit/config.toml

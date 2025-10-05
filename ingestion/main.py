@@ -4,8 +4,8 @@ from typing import List, Tuple
 from dotenv import load_dotenv
 import snowflake.connector  # <-- NEW
 
-from utils.snowflake_io import insert_quotes, insert_raw_json
-from providers.tequila import fetch_min_price
+from ingestion.providers.tequila import fetch_min_price
+from ingestion.utils.snowflake_io import insert_quotes, insert_raw_json
 
 load_dotenv()  # keep secrets/config out of code
 
@@ -126,6 +126,7 @@ def run_once():
 
     n = insert_quotes(batch) if batch else 0
     print(f"Ingestion complete: inserted {n} rows.")
+    return n
 
 if __name__ == "__main__":
     run_once()
