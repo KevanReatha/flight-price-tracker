@@ -1,56 +1,58 @@
-import os
+# ingestion/utils/snowflake_io.py
+import os, time
 import snowflake.connector
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.backends import default_backend
+from snowflake.connector.errors import DatabaseError, ProgrammingError, OperationalError
 
-def _load_private_key_bytes(path: str):
-    with open(path, "rb") as f:
-        key = serialization.load_pem_private_key(f.read(), password=None, backend=default_backend())
-    return key.private_bytes(
-        encoding=serialization.Encoding.DER,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-
-def get_conn():
-    # Why: Key-pair auth avoids interactive MFA prompts and is safer than passwords.
-    pk_path = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH")
+def _conn_kwargs():
+    """Build minimal kwargs from env (key-pair preferred, password fallback)."""
     kwargs = dict(
         account=os.environ["SNOWFLAKE_ACCOUNT"],
         user=os.environ["SNOWFLAKE_USER"],
-        role=os.environ["SNOWFLAKE_ROLE"],
-        warehouse=os.environ["SNOWFLAKE_WAREHOUSE"],
-        database=os.environ["SNOWFLAKE_DATABASE"],
+        role=os.environ.get("SNOWFLAKE_ROLE", "ACCOUNTADMIN"),
+        warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "WH_XS"),
+        database=os.environ.get("SNOWFLAKE_DATABASE", "FLIGHT_DB"),
     )
-    if pk_path:
-        kwargs["private_key"] = _load_private_key_bytes(pk_path)
+    # Key-pair first
+    key_path = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH")
+    if key_path:
+        kwargs["private_key_file"] = key_path
     else:
-        kwargs["password"] = os.environ["SNOWFLAKE_PASSWORD"]  # fallback only
+        # Only if you intentionally use a password
+        pwd = os.environ.get("SNOWFLAKE_PASSWORD")
+        if not pwd:
+            raise RuntimeError("No SNOWFLAKE_PRIVATE_KEY_PATH or SNOWFLAKE_PASSWORD set.")
+        kwargs["password"] = pwd
+    return kwargs
 
-    return snowflake.connector.connect(**kwargs)
+def connect_snowflake(max_retries=3):
+    """
+    Connect with conservative retry:
+    - Immediately abort on credential/user errors (prevents lockout).
+    - Back off on transient 5xx/network errors only.
+    """
+    transient_codes = {"240001", "250001"}  # network / gateway-ish
+    for attempt in range(max_retries):
+        try:
+            return snowflake.connector.connect(**_conn_kwargs())
+        except DatabaseError as e:
+            code = getattr(e, "errno", None)
+            msg = str(e).lower()
 
-def insert_quotes(rows):
-    """
-    rows: [(ORIGIN, DESTINATION, DEPARTURE_DATE, QUOTE_TS, PRICE_AUD, STOPS, AIRLINE_CODE, SOURCE, CABIN), ...]
-    """
-    if not rows:
-        return 0
-    sql = """
-    INSERT INTO RAW.PRICE_QUOTES_PARSED
-    (ORIGIN, DESTINATION, DEPARTURE_DATE, QUOTE_TS, PRICE_AUD, STOPS, AIRLINE_CODE, SOURCE, CABIN)
-    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    """
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.executemany(sql, rows)
-    return len(rows)
+            # === Hard-stop: credential & lockout signals (no retry) ===
+            if ("incorrect username or password" in msg or
+                "mfa" in msg or
+                "temporarily locked" in msg or
+                "authentication" in msg or
+                code in {"390100", "390106"}):
+                raise
 
-def insert_raw_json(route_code, params_json, response_json, ingested_at):
-    # Why: keeping raw snapshots helps audit parsing bugs & ToS compliance (publish aggregates, keep raw private).
-    sql = """
-    INSERT INTO RAW.PRICE_QUOTES_JSON (INGESTED_AT, ROUTE_CODE, PARAMS, RESPONSE)
-    VALUES (%s, %s, PARSE_JSON(%s), PARSE_JSON(%s))
-    """
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, (ingested_at, route_code, params_json, response_json))
+            # === Retry only transient network/service hiccups ===
+            if code and str(code) in transient_codes:
+                time.sleep(1 + attempt)
+                continue
+
+            # Unknown/other: don't spin
+            raise
+
+    # If we get here, all retries failed
+    raise RuntimeError("Snowflake connection failed after retries.")

@@ -1,8 +1,7 @@
 # app/streamlit_app.py
 from __future__ import annotations
 
-from datetime import date, timedelta
-import time
+from datetime import date, timedelta, datetime
 import altair as alt
 import pandas as pd
 import streamlit as st
@@ -14,9 +13,9 @@ st.title("✈️ Flight Price Tracker")
 
 SNOW = st.secrets["snowflake"]  # set in .streamlit/secrets.toml
 
-# Cache & refresh policies (cost control)
-CACHE_TTL_SECS = 86400          # 24h: data ingested daily at 01:00, no need to requery more often
-REFRESH_COOLDOWN_SECS = 300     # 5 min throttle per session for manual reloads
+# Cost guardrails
+CACHE_TTL_SECS = 24 * 60 * 60     # 24h cache for queries
+REFRESH_COOLDOWN_SECS = 5 * 60    # 5 min throttle for manual refresh
 
 # IATA -> airline names (extend as needed)
 AIRLINE_NAME = {
@@ -36,10 +35,26 @@ AIRLINE_NAME = {
 # Visual guardrails for charts
 MIN_PRICE, MAX_PRICE = 50, 3000  # AUD
 
+# --------------------------- Helpers ---------------------------
+def _now_ts() -> float:
+    return datetime.utcnow().timestamp()
+
+def can_refresh_every() -> bool:
+    """
+    Throttle manual refreshes to once every REFRESH_COOLDOWN_SECS per browser session.
+    """
+    last = st.session_state.get("last_manual_refresh_ts", 0.0)
+    if _now_ts() - last >= REFRESH_COOLDOWN_SECS:
+        st.session_state["last_manual_refresh_ts"] = _now_ts()
+        return True
+    return False
 
 # --------------------------- DB Helpers ---------------------------
 def get_connection():
-    """Create a Snowflake connection using key-pair or password."""
+    """
+    Create a Snowflake connection.
+    Prefers inline private key (Streamlit Cloud), falls back to file, then password.
+    """
     kwargs = dict(
         account=SNOW["account"],
         user=SNOW["user"],
@@ -47,20 +62,42 @@ def get_connection():
         warehouse=SNOW["warehouse"],
         database=SNOW["database"],
         schema=SNOW.get("schema", "MART"),
-        session_parameters={"QUERY_TAG": "flight_price_streamlit"},
     )
-    if SNOW.get("private_key_path"):
+
+    # 1) Inline PEM (best for Streamlit Cloud)
+    if SNOW.get("private_key"):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.backends import default_backend
+        pem = SNOW["private_key"].encode()
+        private_key = serialization.load_pem_private_key(
+            pem, password=None, backend=default_backend()
+        )
+        pkb = private_key.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        kwargs["private_key"] = pkb
+
+    # 2) Local file path (handy for dev)
+    elif SNOW.get("private_key_path"):
         kwargs["private_key_file"] = SNOW["private_key_path"]
+
+    # 3) Password (least preferred)
     elif SNOW.get("password"):
         kwargs["password"] = SNOW["password"]
     else:
-        st.error("Add `private_key_path` or `password` in .streamlit/secrets.toml")
+        st.error(
+            "Snowflake credentials missing. Provide one of: "
+            "`private_key` (preferred), `private_key_path`, or `password` in secrets."
+        )
         st.stop()
+
     return snowflake.connector.connect(**kwargs)
 
-
-@st.cache_data(ttl=CACHE_TTL_SECS, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_SECS)
 def fetch_df(sql: str, params: dict | None = None) -> pd.DataFrame:
+    """Cached reads (24h) to keep Snowflake usage low."""
     with get_connection() as con:
         cur = con.cursor()
         try:
@@ -71,20 +108,7 @@ def fetch_df(sql: str, params: dict | None = None) -> pd.DataFrame:
             cur.close()
     return pd.DataFrame(rows, columns=cols)
 
-
-def can_refresh_every(seconds: int = REFRESH_COOLDOWN_SECS) -> bool:
-    """Allow clearing cache only every N seconds per user session."""
-    key = "last_refresh_ts"
-    now = time.time()
-    last = st.session_state.get(key, 0)
-    if now - last >= seconds:
-        st.session_state[key] = now
-        return True
-    return False
-
-
 # --------------------------- SQL ---------------------------
-# Only show the supported routes that actually have data in the selected window
 ROUTES_SQL = """
 SELECT r.route_code
 FROM FLIGHT_DB.CORE.DIM_SUPPORTED_ROUTES r
@@ -133,7 +157,6 @@ WHERE route_code = %(route)s
 ORDER BY quote_day
 """
 
-
 # --------------------------- Sidebar / Controls ---------------------------
 with st.sidebar:
     today = date.today()
@@ -144,7 +167,7 @@ with st.sidebar:
         st.stop()
 
     st.markdown("### Controls")
-    if st.button("🔄 Reload today’s data (once/day)"):
+    if st.button("🔄 Reload today’s data (once every 5 min)"):
         if can_refresh_every():
             st.cache_data.clear()
             st.success("Cache cleared ✅ — next load will pull fresh data from Snowflake.")
@@ -152,11 +175,11 @@ with st.sidebar:
             st.info("⏳ Please wait a few minutes before refreshing again.")
 
     st.caption(
-        "Data updates via Prefect daily at 1:00 AM (Australia/Melbourne). "
+        "Data updates daily at 1:00 AM (Australia/Melbourne) via Prefect. "
         "Queries are cached for 24 hours to control Snowflake costs."
     )
 
-# Dynamically load routes that have data in window (from your supported list)
+# Load supported routes that actually have data in window
 routes_df = fetch_df(ROUTES_SQL, {"start": start_d, "end": end_d})
 routes = routes_df["ROUTE_CODE"].tolist()
 
@@ -168,7 +191,6 @@ if not routes:
     st.stop()
 
 route = st.sidebar.selectbox("Route", routes, index=0)
-
 
 # --------------------------- Query + Present ---------------------------
 params = {"route": route, "start": start_d, "end": end_d}

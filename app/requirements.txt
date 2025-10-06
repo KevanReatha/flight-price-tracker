@@ -14,3 +14,4 @@ snowflake-connector-python
 python-dotenv
 
 # Needed when the Snowflake connector reads private keys for key-pair auth
+cryptography
