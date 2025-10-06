@@ -105,9 +105,12 @@ def run_once():
     for origin, dest in ROUTES:
         for i in range(1, HORIZON_DAYS + 1):
             dep = date.today() + timedelta(days=i)
+            # fetch_min_price must return: (price, stops, airline, params_dict, response_dict)
             price, stops, airline, params, raw = fetch_min_price(origin, dest, dep)
             if price is None:
                 continue
+
+            # rows for RAW.PRICE_QUOTES_PARSED
             batch.append(
                 (
                     origin,
@@ -118,11 +121,17 @@ def run_once():
                     int(stops) if stops is not None else None,
                     airline,
                     SOURCE_NAME,
-                    "Y",
                 )
             )
-            if STORE_JSON and raw:
-                insert_raw_json(f"{origin}-{dest}", json.dumps(params), json.dumps(raw), now)
+
+            # ⬇️ UPDATED: pass dicts directly to VARIANT columns + proper timestamp col
+            if STORE_JSON and raw is not None:
+                insert_raw_json(
+                    route_code=f"{origin}-{dest}",
+                    params=params if isinstance(params, dict) else {},   # defensive
+                    response=raw if isinstance(raw, dict) else {"raw": raw},
+                    ingested_at=now,
+                )
 
     n = insert_quotes(batch) if batch else 0
     print(f"Ingestion complete: inserted {n} rows.")

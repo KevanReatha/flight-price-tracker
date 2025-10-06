@@ -1,58 +1,129 @@
-# ingestion/utils/snowflake_io.py
-import os, time
+from __future__ import annotations
+import os
+from typing import List, Tuple, Optional
 import snowflake.connector
-from snowflake.connector.errors import DatabaseError, ProgrammingError, OperationalError
+from datetime import datetime
 
-def _conn_kwargs():
-    """Build minimal kwargs from env (key-pair preferred, password fallback)."""
+# -------------------------------------------------------------------
+# Connection Helper
+# -------------------------------------------------------------------
+def _connect():
+    """Connect to Snowflake using environment variables."""
     kwargs = dict(
         account=os.environ["SNOWFLAKE_ACCOUNT"],
         user=os.environ["SNOWFLAKE_USER"],
-        role=os.environ.get("SNOWFLAKE_ROLE", "ACCOUNTADMIN"),
-        warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "WH_XS"),
-        database=os.environ.get("SNOWFLAKE_DATABASE", "FLIGHT_DB"),
+        role=os.environ.get("SNOWFLAKE_ROLE"),
+        warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE"),
+        database=os.environ.get("SNOWFLAKE_DATABASE"),
+        schema=os.environ.get("SNOWFLAKE_SCHEMA", "RAW"),
     )
-    # Key-pair first
-    key_path = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH")
-    if key_path:
-        kwargs["private_key_file"] = key_path
+    if os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH"):
+        kwargs["private_key_file"] = os.environ["SNOWFLAKE_PRIVATE_KEY_PATH"]
+    elif os.environ.get("SNOWFLAKE_PASSWORD"):
+        kwargs["password"] = os.environ["SNOWFLAKE_PASSWORD"]
     else:
-        # Only if you intentionally use a password
-        pwd = os.environ.get("SNOWFLAKE_PASSWORD")
-        if not pwd:
-            raise RuntimeError("No SNOWFLAKE_PRIVATE_KEY_PATH or SNOWFLAKE_PASSWORD set.")
-        kwargs["password"] = pwd
-    return kwargs
+        raise RuntimeError("Provide SNOWFLAKE_PRIVATE_KEY_PATH or SNOWFLAKE_PASSWORD")
+    return snowflake.connector.connect(**kwargs)
 
-def connect_snowflake(max_retries=3):
+# -------------------------------------------------------------------
+# Idempotent Insert (MERGE)
+# -------------------------------------------------------------------
+def insert_quotes(
+    batch: List[Tuple[str, str, datetime, datetime, float, Optional[int], Optional[str], str]]
+) -> int:
     """
-    Connect with conservative retry:
-    - Immediately abort on credential/user errors (prevents lockout).
-    - Back off on transient 5xx/network errors only.
+    Insert or update parsed quotes into RAW.PRICE_QUOTES_PARSED (idempotent).
+
+    Expected tuple order:
+      (origin, destination, departure_date, observed_at, price_aud, stops, airline_code, source)
     """
-    transient_codes = {"240001", "250001"}  # network / gateway-ish
-    for attempt in range(max_retries):
+    if not batch:
+        return 0
+
+    dict_rows = []
+    for origin, destination, dep_date, observed_at, price_aud, stops, airline, source in batch:
+        dict_rows.append(
+            {
+                "origin": origin,
+                "destination": destination,
+                "departure_date": dep_date,
+                "quote_ts": observed_at,  # matches QUOTE_TS
+                "price_aud": float(price_aud),
+                "stops": int(stops) if stops is not None else None,
+                "airline_code": airline,
+                "source": source,
+            }
+        )
+
+    sql = """
+    MERGE INTO FLIGHT_DB.RAW.PRICE_QUOTES_PARSED AS tgt
+    USING (
+        SELECT
+            %(origin)s AS origin,
+            %(destination)s AS destination,
+            %(departure_date)s AS departure_date,
+            %(quote_ts)s AS quote_ts,
+            %(price_aud)s AS price_aud,
+            %(stops)s AS stops,
+            %(airline_code)s AS airline_code,
+            %(source)s AS source
+    ) AS src
+    ON tgt.origin = src.origin
+       AND tgt.destination = src.destination
+       AND tgt.departure_date = src.departure_date
+       AND tgt.quote_ts = src.quote_ts
+    WHEN MATCHED THEN
+        UPDATE SET
+            tgt.price_aud = src.price_aud,
+            tgt.stops = src.stops,
+            tgt.airline_code = src.airline_code,
+            tgt.source = src.source
+    WHEN NOT MATCHED THEN
+        INSERT (origin, destination, departure_date, quote_ts, price_aud, stops, airline_code, source)
+        VALUES (src.origin, src.destination, src.departure_date, src.quote_ts, src.price_aud, src.stops, src.airline_code, src.source);
+    """
+
+    with _connect() as con:
+        cur = con.cursor()
         try:
-            return snowflake.connector.connect(**_conn_kwargs())
-        except DatabaseError as e:
-            code = getattr(e, "errno", None)
-            msg = str(e).lower()
+            cur.executemany(sql, dict_rows)
+            con.commit()
+            return len(batch)
+        finally:
+            cur.close()
 
-            # === Hard-stop: credential & lockout signals (no retry) ===
-            if ("incorrect username or password" in msg or
-                "mfa" in msg or
-                "temporarily locked" in msg or
-                "authentication" in msg or
-                code in {"390100", "390106"}):
-                raise
-
-            # === Retry only transient network/service hiccups ===
-            if code and str(code) in transient_codes:
-                time.sleep(1 + attempt)
-                continue
-
-            # Unknown/other: don't spin
-            raise
-
-    # If we get here, all retries failed
-    raise RuntimeError("Snowflake connection failed after retries.")
+# -------------------------------------------------------------------
+# Raw JSON insert unchanged
+# -------------------------------------------------------------------
+def insert_raw_json(
+    route_code: str,
+    params: dict,
+    response: dict,
+    ingested_at: datetime,
+) -> int:
+    """
+    Store original API responses in RAW.PRICE_QUOTES_JSON.
+    Table columns: ROUTE_CODE (VARCHAR), PARAMS (VARIANT), RESPONSE (VARIANT), INGESTED_AT (TIMESTAMP_TZ)
+    """
+    sql = """
+    INSERT INTO FLIGHT_DB.RAW.PRICE_QUOTES_JSON
+      (ROUTE_CODE, PARAMS, RESPONSE, INGESTED_AT)
+    VALUES
+      (%(route_code)s, %(params)s, %(response)s, %(ingested_at)s)
+    """
+    with _connect() as con:
+        cur = con.cursor()
+        try:
+            cur.execute(
+                sql,
+                {
+                    "route_code": route_code,
+                    "params": params,         # dict -> VARIANT
+                    "response": response,     # dict -> VARIANT
+                    "ingested_at": ingested_at,
+                },
+            )
+            con.commit()
+            return cur.rowcount or 0
+        finally:
+            cur.close()
