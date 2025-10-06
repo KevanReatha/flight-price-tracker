@@ -125,13 +125,8 @@ def run_once():
             )
 
             # ⬇️ UPDATED: pass dicts directly to VARIANT columns + proper timestamp col
-            if STORE_JSON and raw is not None:
-                insert_raw_json(
-                    route_code=f"{origin}-{dest}",
-                    params=params if isinstance(params, dict) else {},   # defensive
-                    response=raw if isinstance(raw, dict) else {"raw": raw},
-                    ingested_at=now,
-                )
+            if STORE_JSON and raw:
+                insert_raw_json(f"{origin}-{dest}", params, raw, now)
 
     n = insert_quotes(batch) if batch else 0
     print(f"Ingestion complete: inserted {n} rows.")

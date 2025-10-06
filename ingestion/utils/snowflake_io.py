@@ -3,6 +3,7 @@ import os
 from typing import List, Tuple, Optional
 import snowflake.connector
 from datetime import datetime
+import json
 
 # -------------------------------------------------------------------
 # Connection Helper
@@ -97,19 +98,27 @@ def insert_quotes(
 # -------------------------------------------------------------------
 def insert_raw_json(
     route_code: str,
-    params: dict,
-    response: dict,
-    ingested_at: datetime,
+    params_json,
+    raw_json,
+    observed_at: datetime,
 ) -> int:
     """
     Store original API responses in RAW.PRICE_QUOTES_JSON.
-    Table columns: ROUTE_CODE (VARCHAR), PARAMS (VARIANT), RESPONSE (VARIANT), INGESTED_AT (TIMESTAMP_TZ)
+    Table columns: INGESTED_AT TIMESTAMP_TZ, ROUTE_CODE VARCHAR,
+                   PARAMS VARIANT, RESPONSE VARIANT
     """
+    # Ensure strings; Snowflake will parse them into VARIANT
+    params_str = params_json if isinstance(params_json, str) else json.dumps(params_json, separators=(",", ":"))
+    raw_str    = raw_json    if isinstance(raw_json, str)    else json.dumps(raw_json,    separators=(",", ":"))
+
     sql = """
     INSERT INTO FLIGHT_DB.RAW.PRICE_QUOTES_JSON
-      (ROUTE_CODE, PARAMS, RESPONSE, INGESTED_AT)
-    VALUES
-      (%(route_code)s, %(params)s, %(response)s, %(ingested_at)s)
+    (INGESTED_AT, ROUTE_CODE, PARAMS, RESPONSE)
+    SELECT
+    %(ingested_at)s,
+    %(route_code)s,
+    PARSE_JSON(%(params_str)s),
+    PARSE_JSON(%(raw_str)s)
     """
     with _connect() as con:
         cur = con.cursor()
@@ -117,10 +126,10 @@ def insert_raw_json(
             cur.execute(
                 sql,
                 {
+                    "ingested_at": observed_at,
                     "route_code": route_code,
-                    "params": params,         # dict -> VARIANT
-                    "response": response,     # dict -> VARIANT
-                    "ingested_at": ingested_at,
+                    "params_str": params_str,
+                    "raw_str": raw_str,
                 },
             )
             con.commit()
