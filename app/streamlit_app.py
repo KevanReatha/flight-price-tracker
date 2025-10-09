@@ -6,6 +6,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 import snowflake.connector
+from common.snow import connect_snowflake
 
 # --------------------------- Page / Config ---------------------------
 st.set_page_config(page_title="Flight Price Tracker", page_icon="✈️", layout="wide")
@@ -98,7 +99,9 @@ def get_connection():
 @st.cache_data(ttl=CACHE_TTL_SECS)
 def fetch_df(sql: str, params: dict | None = None) -> pd.DataFrame:
     """Cached reads (24h) to keep Snowflake usage low."""
-    with get_connection() as con:
+    with connect_snowflake(
+    schema=SNOW.get("schema", "MART")  # keep your selected schema
+    ) as con:
         cur = con.cursor()
         try:
             cur.execute(sql, params or {})

@@ -4,6 +4,7 @@ from typing import List, Tuple, Optional
 import snowflake.connector
 from datetime import datetime
 import json
+from common.snow import connect_snowflake
 
 # -------------------------------------------------------------------
 # Connection Helper
@@ -84,7 +85,7 @@ def insert_quotes(
         VALUES (src.origin, src.destination, src.departure_date, src.quote_ts, src.price_aud, src.stops, src.airline_code, src.source);
     """
 
-    with _connect() as con:
+    with connect_snowflake() as con:
         cur = con.cursor()
         try:
             cur.executemany(sql, dict_rows)
