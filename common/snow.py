@@ -5,6 +5,24 @@ import snowflake.connector
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
 
+try:
+    import streamlit as st  # available on Streamlit Cloud
+except Exception:
+    st = None
+
+
+def _pem_to_pkcs8_der(pem_str: str) -> bytes:
+    """Convert a PEM string to PKCS8 DER bytes for Snowflake connector."""
+    key = serialization.load_pem_private_key(
+        pem_str.encode(), password=None, backend=default_backend()
+    )
+    return key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+
+
 def connect_snowflake(
     account: str | None = None,
     user: str | None = None,
@@ -15,9 +33,43 @@ def connect_snowflake(
 ) -> snowflake.connector.SnowflakeConnection:
     """
     Robust Snowflake connection:
-      - Prefers key-pair auth (inline PEM or file), falls back to password
-      - Converts PEM -> PKCS8 DER bytes (fresh JWT each call)
+      - On Streamlit Cloud: reads st.secrets["snowflake"]
+      - Locally/Prefect:    reads environment variables
+      - Prefers key-pair auth (PEM inline or file); falls back to password
     """
+    # 1) Prefer Streamlit secrets when available
+    secrets = None
+    if st is not None:
+        try:
+            secrets = st.secrets.get("snowflake", None)
+        except Exception:
+            secrets = None
+
+    if secrets:
+        cfg = {
+            "account": account or secrets.get("account"),
+            "user":    user    or secrets.get("user"),
+            "role":    role    or secrets.get("role"),
+            "warehouse": warehouse or secrets.get("warehouse"),
+            "database":  database  or secrets.get("database"),
+            "schema":    schema    or secrets.get("schema"),
+        }
+
+        private_key_pem = secrets.get("private_key")  # your current secrets name
+        password        = secrets.get("password")     # optional fallback
+
+        if private_key_pem:
+            cfg["private_key"] = _pem_to_pkcs8_der(private_key_pem)
+        elif password:
+            cfg["password"] = password
+        else:
+            raise RuntimeError(
+                "snowflake secrets found, but neither 'private_key' nor 'password' provided."
+            )
+
+        return snowflake.connector.connect(**cfg)
+
+    # 2) Fallback to environment variables (your original behavior)
     cfg = {
         "account": account or os.environ["SNOWFLAKE_ACCOUNT"],
         "user": user or os.environ["SNOWFLAKE_USER"],
@@ -27,29 +79,15 @@ def connect_snowflake(
         "schema": schema or os.environ.get("SNOWFLAKE_SCHEMA"),
     }
 
-    pem_inline = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PEM")   # for Streamlit secrets
-    pem_path   = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH")  # for local/Prefect
+    pem_inline = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PEM")   # inline PEM
+    pem_path   = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PATH")  # path to PEM file
     password   = os.environ.get("SNOWFLAKE_PASSWORD")          # fallback
 
     if pem_inline:
-        private_key = serialization.load_pem_private_key(
-            pem_inline.encode(), password=None, backend=default_backend()
-        )
-        cfg["private_key"] = private_key.private_bytes(
-            encoding=serialization.Encoding.DER,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
+        cfg["private_key"] = _pem_to_pkcs8_der(pem_inline)
     elif pem_path:
         with open(pem_path, "rb") as f:
-            private_key = serialization.load_pem_private_key(
-                f.read(), password=None, backend=default_backend()
-            )
-        cfg["private_key"] = private_key.private_bytes(
-            encoding=serialization.Encoding.DER,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption(),
-        )
+            cfg["private_key"] = _pem_to_pkcs8_der(f.read().decode())
     elif password:
         cfg["password"] = password
     else:
